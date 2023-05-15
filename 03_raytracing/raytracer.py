@@ -118,19 +118,8 @@ class Sphere:
         color += rgb(1, 1, 1) * np.power(np.clip(phong, 0, 1), 50) * seelight
         return color
     
-    def rotate(self, pos, neg):
-        if pos:
-            cos_theta = np.cos(np.pi / 10)
-            sin_theta = np.sin(np.pi / 10)
-        elif neg:
-            cos_theta = np.cos(-np.pi / 10)
-            sin_theta = np.sin(-np.pi / 10)
-
-        R = np.array([  [cos_theta,   0,  sin_theta   ],
-                        [0,           1,  0           ],
-                        [-sin_theta,  0,  cos_theta   ]])
-        
-        newCenter = R@np.array([self.c.x, self.c.y, self.c.z]).T
+    def rotate(self, pos, neg):       
+        newCenter = rotate_obj(self.c, pos, neg)
         self.c = vec3(newCenter[0], newCenter[1], newCenter[2])
 
 class CheckeredPlane:
@@ -146,21 +135,21 @@ class CheckeredPlane:
         return np.where((t > 0), t, FARAWAY)
 
     def diffusecolor(self, M):
-        checker = ((M.x * 2).astype(int) % 2) == ((M.z * 2).astype(int) % 2)
+        checker = (np.ceil((M.x * 2)) % 2) == (np.ceil((M.z * 2)) % 2)
         return self.diffuse * checker
 
     def light(self, O, D, d, scene, bounce):
-        M = (O + D * d)                         # intersection point        # Usprung + Distanz * Strahl
+        M = (O + D * d)                         # intersection point
         N = self.n                              # normal
         toL = (L - M).norm()                    # direction to light
         toO = (E - M).norm()                    # direction to ray origin
-        nudged = M + N * .0001                  # M nudged to avoid itself  # damit er sich nicht selbst reflektiert, also sich nicht selbst nochmal schneidet (Strahl reflektiert an Objekt)
+        nudged = M + N * .0001                  # M nudged to avoid itself
 
         # Shadow: find if the point is shadowed or not.
         # This amounts to finding out if M can see the light
         light_distances = [s.intersect(nudged, toL) for s in scene]
         light_nearest = reduce(np.minimum, light_distances)
-        seelight = light_distances[scene.index(self)] == light_nearest # self = Objekt (z.B. Kugel), vergleicht, ob eigene Distanzen die nähsten sind??
+        seelight = light_distances[scene.index(self)] == light_nearest
 
         # Ambient
         color = rgb(0.05, 0.05, 0.05)
@@ -170,9 +159,9 @@ class CheckeredPlane:
         color += self.diffusecolor(M) * lv * seelight
 
         # Reflection
-        if bounce < 2: # nur 1x reflektieren
+        if bounce < 2:
             rayD = (D - N * 2 * D.dot(N)).norm()
-            color += raytrace(nudged, rayD, scene, bounce + 1) * self.mirror # mirror = wie stark reflektiert es; dann addiert auf Farbe (aka dann neue Farbe)
+            color += raytrace(nudged, rayD, scene, bounce + 1) * self.mirror
 
         # Blinn-Phong shading (specular)
         phong = N.dot((toL + toO).norm())
@@ -236,32 +225,44 @@ class Triangle:
         color += rgb(1, 1, 1) * np.power(np.clip(phong, 0, 1), 50) * seelight
         return color
     
-    def rotate(self, pos, neg):
-        if pos:
-            cos_theta = np.cos(np.pi / 10)
-            sin_theta = np.sin(np.pi / 10)
-        elif neg:
-            cos_theta = np.cos(-np.pi / 10)
-            sin_theta = np.sin(-np.pi / 10)
-
-        R = np.array([  [cos_theta,   0,  sin_theta   ],
-                        [0,           1,  0           ],
-                        [-sin_theta,  0,  cos_theta   ]])
-        
-        newA = R@np.array([self.a.x, self.a.y, self.a.z]).T
+    def rotate(self, pos, neg):       
+        newA = rotate_obj(self.a, pos, neg)
         self.a = vec3(newA[0], newA[1], newA[2])
 
-        newB = R@np.array([self.b.x, self.b.y, self.b.z]).T
+        newB = rotate_obj(self.b, pos, neg)
         self.b = vec3(newB[0], newB[1], newB[2])
 
-        newC = R@np.array([self.c.x, self.c.y, self.c.z]).T
+        newC = rotate_obj(self.c, pos, neg)
         self.c = vec3(newC[0], newC[1], newC[2])
+        
 
-scene = [Sphere(vec3(.75, .1, 2.25), .6, vec3(1, 0, 0)), # red sphere (right)
+def rotate_obj(vec, pos, neg):
+    if pos:
+        cos_theta = np.cos(np.pi / 10)
+        sin_theta = np.sin(np.pi / 10)
+    elif neg:
+        cos_theta = np.cos(-np.pi / 10)
+        sin_theta = np.sin(-np.pi / 10)
+
+    T = np.array([  [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, -2.25],
+                    [0, 0, 0, 1]])
+
+    R = np.array([  [cos_theta,   0,  sin_theta   , 0],
+                    [0,           1,  0           , 0],
+                    [-sin_theta,  0,  cos_theta   , 0],
+                    [0,           0,  0           , 1]])
+
+    return (np.linalg.inv(T)@R@T@np.array([vec.x, vec.y, vec.z, 1]))[:3]
+
+scene = [
+        Sphere(vec3(.75, .1, 2.25), .6, vec3(1, 0, 0), mirror=0.1), # red sphere (right)
         Sphere(vec3(-.75, .1, 2.25), .6, vec3(0, 1, 0)), # green sphere (left)
-        Sphere(vec3(0, 1.25, 2.25), .6, vec3(0, 0, 1)), # blue sphere (top)
+        Sphere(vec3(0, 1.25, 2.25), .6, vec3(0, 0, 1), mirror=1), # blue sphere (top)
         CheckeredPlane(vec3(0, -1, 0), vec3(0, 1, 0), vec3(1, 1, 1)),
-        Triangle(vec3(-.75, .1, 2.25), vec3(.75, .1, 2.25), vec3(0, 1.25, 2.25), vec3(1, 1, 0))]
+        Triangle(vec3(-.75, .1, 2.25), vec3(.75, .1, 2.25), vec3(0, 1.25, 2.25), vec3(1, 1, 0))
+        ]
 
 def render_scene(width, height, pos = False, neg = False):
 
