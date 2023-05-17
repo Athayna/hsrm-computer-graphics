@@ -45,8 +45,8 @@ class vec3():
         return vec3(a, b, c)
 rgb = vec3
 
-L = vec3(5, 5, -10)        # Point light position
-E = vec3(0, 0.35, -1)     # Eye position
+L = vec3(5, 5, -10)         # Point light position
+E = vec3(0, 0.35, -1)       # Eye position
 FARAWAY = 1.0e39            # an implausibly huge distance
 
 def raytrace(O, D, scene, bounce = 0):
@@ -180,7 +180,6 @@ class Triangle:
         self.mirror = mirror
 
     def intersect(self, O, D):
-        # Berechnung 1 zu 1 aus Folien übernommen (Folie 30 - Ray-Triangle Intersection)
         u = self.b - self.a
         v = self.c - self.a
         w = O - self.a
@@ -189,36 +188,36 @@ class Triangle:
         r = 1 / (D.cross(v).dot(u)) * (D.cross(v).dot(w))
         s = 1 / (D.cross(v).dot(u)) * (w.cross(u).dot(D))
 
-        pred = (r >= 0) & (r <= 1) & (s >= 0) & (s <= 1) & (r + s <= 1) # nimmt nur Werte auf, an denen r,s zwischen 0,1 sind und r+s kleiner gleich 1
+        pred = (r >= 0) & (r <= 1) & (s >= 0) & (s <= 1) & (r + s <= 1) & (t > 0)
         return np.where(pred, t, FARAWAY)
 
     def diffusecolor(self, M):
         return self.diffuse
 
     def light(self, O, D, d, scene, bounce):
-        M = (O + D * d)                         # intersection point        # Usprung + Distanz * Strahl
-        N = self.a.cross(self.b)          # normal
-        toL = (L - M).norm()                    # direction to light        # Richtung zum Licht
-        toO = (E - M).norm()                    # direction to ray origin   # Richtung zum Ursprung
-        nudged = M + N * .0001                  # M nudged to avoid itself  # damit er sich nicht selbst reflektiert, also sich nicht selbst nochmal schneidet (Strahl reflektiert an Objekt)
+        M = (O + D * d)                         # intersection point
+        N = self.a.cross(self.b)                # normal
+        toL = (L - M).norm()                    # direction to light
+        toO = (E - M).norm()                    # direction to ray origin
+        nudged = M + N * .0001                  # M nudged to avoid itself
 
         # Shadow: find if the point is shadowed or not.
         # This amounts to finding out if M can see the light
         light_distances = [s.intersect(nudged, toL) for s in scene]
         light_nearest = reduce(np.minimum, light_distances)
-        seelight = light_distances[scene.index(self)] == light_nearest # self = Objekt (z.B. Kugel), vergleicht, ob eigene Distanzen die nähsten sind??
+        seelight = light_distances[scene.index(self)] == light_nearest
 
         # Ambient
         color = rgb(0.05, 0.05, 0.05)
 
         # Lambert shading (diffuse)
-        lv = np.maximum(N.dot(toL), 0)
+        lv = np.abs(N.dot(toL))
         color += self.diffusecolor(M) * lv * seelight
 
         # Reflection
-        if bounce < 2: # nur 1x reflektieren
+        if bounce < 2:
             rayD = (D - N * 2 * D.dot(N)).norm()
-            color += raytrace(nudged, rayD, scene, bounce + 1) * self.mirror # mirror = wie stark reflektiert es; dann addiert auf Farbe (aka dann neue Farbe)
+            color += raytrace(nudged, rayD, scene, bounce + 1) * self.mirror
 
         # Blinn-Phong shading (specular)
         phong = N.dot((toL + toO).norm())
