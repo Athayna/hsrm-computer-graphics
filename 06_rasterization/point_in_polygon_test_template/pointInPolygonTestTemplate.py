@@ -50,7 +50,19 @@ if __name__ == '__main__':
         # - write test routine to check wether line l1 and line l2 intersect
         # - should return TRUE iff the lines intersect
 
-        return np.random.random() > 0.5
+        t1 = np.array(l1[1]) - np.array(l1[0]) # b - a
+        t2 = np.array(l2[1]) - np.array(l2[0]) # d - c
+        u1 = np.array(l2[0]) - np.array(l1[0]) # c - a
+        u2 = np.array(l2[1]) - np.array(l1[0]) # d - a
+        v1 = np.array(l1[1]) - np.array(l2[0]) # b - c
+        v2 = np.array(l1[1]) - np.array(l2[1]) # b - d
+
+        s1 = np.sign(np.cross(t1, u1))
+        s2 = np.sign(np.cross(t1, v1))
+        s3 = np.sign(np.cross(t2, u2))
+        s4 = np.sign(np.cross(t2, v2))
+
+        return s1 * s2 < 0 and s3 * s4 < 0
 
 
     # instantiate a scene
