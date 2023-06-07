@@ -33,6 +33,8 @@ from OpenGL.GL.shaders import *
 
 from mat4 import *
 
+import sys
+
 EXIT_FAILURE = -1
 
 
@@ -41,11 +43,13 @@ class Scene:
         OpenGL scene class that render a RGB colored tetrahedron.
     """
 
-    def __init__(self, width, height, scenetitle="Hello Triangle"):
+    def __init__(self, width, height, scenetitle="obj-Viewer"):
         self.scenetitle         = scenetitle
         self.width              = width
         self.height             = height
-        self.angle              = 0
+        self.angleY             = 0
+        self.angleX             = 0
+        self.angleZ             = 0
         self.angle_increment    = 1
         self.animate            = False
 
@@ -71,16 +75,32 @@ class Scene:
         # 1. Load geometry from file and calc normals if not available
         # 2. Load geometry and normals in buffer objects
 
+        with open(f"../models/{sys.argv[1]}", "r") as file:
+            lines = file.readlines()
+            positions = []
+            colors = []
+            indices = []
+            for line in lines:
+                if line.startswith("vn"):
+                    colors.append(line[2:].split())
+                elif line.startswith("v"):
+                    positions.append(line[1:].split())
+                elif line.startswith("f"):
+                    indices.append(line[1:].replace("/", " ").split())
+            positions = np.array(positions, dtype=np.float32)
+            colors = np.array(colors, dtype=np.float32)
+            self.indices = np.array(indices, dtype=np.int32)
+
         # generate vertex array object
         self.vertex_array = glGenVertexArrays(1)
         glBindVertexArray(self.vertex_array)
 
         # generate and fill buffer with vertex positions (attribute 0)
-        positions = np.array([  0.0,  0.58,  0.0, # 0. vertex
-                               -0.5, -0.29,  0.0, # 1. vertex
-                                0.5, -0.29,  0.0, # 2. vertex
-                                0.0,  0.00, -0.58 # 3. vertex
-                                ], dtype=np.float32)
+        # positions = np.array([  0.0,  0.58,  0.0, # 0. vertex
+        #                        -0.5, -0.29,  0.0, # 1. vertex
+        #                         0.5, -0.29,  0.0, # 2. vertex
+        #                         0.0,  0.00, -0.58 # 3. vertex
+        #                         ], dtype=np.float32)
         pos_buffer = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, pos_buffer)
         glBufferData(GL_ARRAY_BUFFER, positions.nbytes, positions, GL_STATIC_DRAW)
@@ -88,11 +108,11 @@ class Scene:
         glEnableVertexAttribArray(0)
  
         # generate and fill buffer with vertex colors (attribute 1)
-        colors = np.array([ 1.0, 0.0, 0.0, # 0. color
-                            0.0, 1.0, 0.0, # 1. color
-                            0.0, 0.0, 1.0, # 2. color
-                            1.0, 1.0, 1.0  # 3. color
-                            ], dtype=np.float32)
+        # colors = np.array([ 1.0, 0.0, 0.0, # 0. color
+        #                     0.0, 1.0, 0.0, # 1. color
+        #                     0.0, 0.0, 1.0, # 2. color
+        #                     1.0, 1.0, 1.0  # 3. color
+        #                     ], dtype=np.float32)
         col_buffer = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, col_buffer)
         glBufferData(GL_ARRAY_BUFFER, colors.nbytes, colors, GL_STATIC_DRAW)
@@ -100,7 +120,7 @@ class Scene:
         glEnableVertexAttribArray(1)
 
         # generate index buffer (for triangle strip)
-        self.indices = np.array([0, 1, 2, 3, 0, 1], dtype=np.int32)        
+        #self.indices = np.array([0, 1, 2, 3, 0, 1], dtype=np.int32)        
         ind_buffer_object = glGenBuffers(1)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ind_buffer_object)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices.nbytes, self.indices, GL_STATIC_DRAW)
@@ -132,12 +152,12 @@ class Scene:
 
         if self.animate:
             # increment rotation angle in each frame
-            self.angle += self.angle_increment
+            self.angleY += self.angle_increment
     
         # setup matrices
         projection = perspective(45.0, self.width/self.height, 1.0, 5.0)
         view       = look_at(0,0,2, 0,0,0, 0,1,0)
-        model      = rotate_y(self.angle)
+        model      = rotate_y(self.angleY) @ rotate_x(self.angleX) @ rotate_z(self.angleZ)
         mvp_matrix = projection @ view @ model
 
         # enable shader & set uniforms
@@ -223,7 +243,8 @@ class RenderWindow:
         print("mouse button: ", win, button, action, mods)
         # TODO: realize arcball metaphor for rotations as well as
         #       scaling and translation paralell to the image plane,
-        #       with the mouse. 
+        #       with the mouse.
+
 
     def on_keyboard(self, win, key, scancode, action, mods):
         print("keyboard: ", win, key, scancode, action, mods)
@@ -241,12 +262,15 @@ class RenderWindow:
                 print("toggle shading: wireframe, grouraud, phong")
             if key == glfw.KEY_X:
                 # TODO:
+                self.scene.angleX += 18
                 print("rotate: around x-axis")
             if key == glfw.KEY_Y:
                 # TODO:
+                self.scene.angleY += 18
                 print("rotate: around y-axis")
             if key == glfw.KEY_Z:
                 # TODO:
+                self.scene.angleZ += 18
                 print("rotate: around z-axis")
 
 
@@ -261,7 +285,7 @@ class RenderWindow:
 
             # setup viewport
             width, height = glfw.get_framebuffer_size(self.window)
-            glViewport(0, 0, width, height);
+            glViewport(0, 0, width, height)
 
             # call the rendering function
             self.scene.draw()
@@ -277,7 +301,12 @@ class RenderWindow:
 # main function
 if __name__ == '__main__':
 
-    print("presse 'a' to toggle animation...")
+    print("press 'a' to toggle animation...")
+    print("press 'p' to toggle projection...")
+    print("press 's' to toggle shading...")
+    print("press 'x' to rotate around x-axis...")
+    print("press 'y' to rotate around y-axis...")
+    print("press 'z' to rotate around z-axis...")
 
     # set size of render viewport
     width, height = 640, 480
