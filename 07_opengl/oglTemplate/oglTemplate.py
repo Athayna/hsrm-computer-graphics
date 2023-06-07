@@ -52,6 +52,7 @@ class Scene:
         self.angleZ             = 0
         self.angle_increment    = 1
         self.animate            = False
+        self.persective         = True
 
 
     def init_GL(self):
@@ -78,18 +79,33 @@ class Scene:
         with open(f"../models/{sys.argv[1]}", "r") as file:
             lines = file.readlines()
             positions = []
-            colors = []
+            normals = []
             indices = []
             for line in lines:
                 if line.startswith("vn"):
-                    colors.append(line[2:].split())
+                    normal = line[2:].split()
+                    for i in range(3):
+                        normals.append(float(normal[i]))
                 elif line.startswith("v"):
-                    positions.append(line[1:].split())
+                    position = line[1:].split()
+                    for i in range(3):
+                        positions.append(float(position[i]))
                 elif line.startswith("f"):
-                    indices.append(line[1:].replace("/", " ").split())
-            positions = np.array(positions, dtype=np.float32)
-            colors = np.array(colors, dtype=np.float32)
-            self.indices = np.array(indices, dtype=np.int32)
+                    if "//" in line:
+                        index = line[1:].replace("/", " ").split()
+                        for i in range(0, 6, 2):
+                            indices.append(int(index[i]) - 1)
+                    else:
+                        index = line[1:].split()
+                        for i in range(3):
+                            indices.append(int(index[i]) - 1)
+
+        # if normals is empty, calculate normals
+        if len(normals) == 0:
+            for i in range(0, len(positions), 3):
+                v1 = positions[i+1] - positions[i]
+                v2 = positions[i+2] - positions[i]
+                normals.append(np.cross(v1, v2))
 
         # generate vertex array object
         self.vertex_array = glGenVertexArrays(1)
@@ -101,6 +117,7 @@ class Scene:
         #                         0.5, -0.29,  0.0, # 2. vertex
         #                         0.0,  0.00, -0.58 # 3. vertex
         #                         ], dtype=np.float32)
+        positions = np.array(positions, dtype=np.float32)
         pos_buffer = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, pos_buffer)
         glBufferData(GL_ARRAY_BUFFER, positions.nbytes, positions, GL_STATIC_DRAW)
@@ -113,14 +130,16 @@ class Scene:
         #                     0.0, 0.0, 1.0, # 2. color
         #                     1.0, 1.0, 1.0  # 3. color
         #                     ], dtype=np.float32)
-        col_buffer = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, col_buffer)
-        glBufferData(GL_ARRAY_BUFFER, colors.nbytes, colors, GL_STATIC_DRAW)
+        normals = np.array(normals, dtype=np.float32)
+        norm_buffer = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, norm_buffer)
+        glBufferData(GL_ARRAY_BUFFER, normals.nbytes, normals, GL_STATIC_DRAW)
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, None)
         glEnableVertexAttribArray(1)
 
         # generate index buffer (for triangle strip)
         #self.indices = np.array([0, 1, 2, 3, 0, 1], dtype=np.int32)        
+        self.indices = np.array(indices, dtype=np.int32)
         ind_buffer_object = glGenBuffers(1)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ind_buffer_object)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices.nbytes, self.indices, GL_STATIC_DRAW)
@@ -155,7 +174,10 @@ class Scene:
             self.angleY += self.angle_increment
     
         # setup matrices
-        projection = perspective(45.0, self.width/self.height, 1.0, 5.0)
+        if self.persective:
+            projection = perspective(45.0, self.width/self.height, 1.0, 5.0)
+        else:
+            projection = ortho((self.width / self.height) * -1, (self.width / self.height) * 1, -1, 1, 0, 10)
         view       = look_at(0,0,2, 0,0,0, 0,1,0)
         model      = rotate_y(self.angleY) @ rotate_x(self.angleX) @ rotate_z(self.angleZ)
         mvp_matrix = projection @ view @ model
@@ -170,7 +192,7 @@ class Scene:
 
         # enable vertex array & draw triangle(s)
         glBindVertexArray(self.vertex_array)
-        glDrawElements(GL_TRIANGLE_STRIP, self.indices.nbytes//4, GL_UNSIGNED_INT, None)
+        glDrawElements(GL_TRIANGLES, self.indices.nbytes//4, GL_UNSIGNED_INT, None)
 
         # unbind the shader and vertex array state
         glUseProgram(0)
@@ -256,6 +278,7 @@ class RenderWindow:
                 self.scene.animate = not self.scene.animate
             if key == glfw.KEY_P:
                 # TODO:
+                self.scene.persective = not self.scene.persective
                 print("toggle projection: orthographic / perspective ")
             if key == glfw.KEY_S:
                 # TODO:
