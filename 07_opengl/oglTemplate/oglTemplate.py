@@ -37,23 +37,31 @@ import sys
 
 EXIT_FAILURE = -1
 
-
 class Scene:
     """
-        OpenGL scene class that render a RGB colored tetrahedron.
+        OpenGL scene class that renders obj files as wireframe, with goroud or phong shading.
     """
 
     def __init__(self, width, height, scenetitle="obj-Viewer"):
         self.scenetitle         = scenetitle
         self.width              = width
         self.height             = height
+        self.angle_increment    = 1
+        self.animate            = False
+
+        # self added variables
         self.angleY             = 0
         self.angleX             = 0
         self.angleZ             = 0
-        self.angle_increment    = 1
-        self.animate            = False
         self.persective         = True
-
+        self.shading            = 0
+        self.center             = np.array([0.0, 0.0, 0.0])
+        self.maxlen             = 0.0
+        self.size               = 1.0
+        self.zoom               = False
+        self.zoom_start         = 0.0
+        self.move               = False
+        self.move_start         = np.array([0.0, 0.0])
 
     def init_GL(self):
         # setup buffer (vertices, colors, normals, ...)
@@ -69,43 +77,14 @@ class Scene:
 
         # unbind vertex array to bind it again in method draw
         glBindVertexArray(0)
-
  
     def gen_buffers(self):
         # TODO: 
         # 1. Load geometry from file and calc normals if not available
         # 2. Load geometry and normals in buffer objects
-
-        with open(f"../models/{sys.argv[1]}", "r") as file:
-            lines = file.readlines()
-            positions = []
-            normals = []
-            indices = []
-            for line in lines:
-                if line.startswith("vn"):
-                    normal = line[2:].split()
-                    for i in range(3):
-                        normals.append(float(normal[i]))
-                elif line.startswith("v"):
-                    position = line[1:].split()
-                    for i in range(3):
-                        positions.append(float(position[i]))
-                elif line.startswith("f"):
-                    if "//" in line:
-                        index = line[1:].replace("/", " ").split()
-                        for i in range(0, 6, 2):
-                            indices.append(int(index[i]) - 1)
-                    else:
-                        index = line[1:].split()
-                        for i in range(3):
-                            indices.append(int(index[i]) - 1)
-
-        # if normals is empty, calculate normals
-        if len(normals) == 0:
-            for i in range(0, len(positions), 3):
-                v1 = positions[i+1] - positions[i]
-                v2 = positions[i+2] - positions[i]
-                normals.append(np.cross(v1, v2))
+        
+        positions, normals, indices = self.load_geometry(sys.argv[1])  
+        self.center, self.maxlen = self.center_object(positions)         
 
         # generate vertex array object
         self.vertex_array = glGenVertexArrays(1)
@@ -148,12 +127,65 @@ class Scene:
         glBindBuffer(GL_ARRAY_BUFFER, 0)
         glBindVertexArray(0)
 
+    def load_geometry(self, filename):
+        with open(f"../models/{filename}", "r") as file:
+            lines = file.readlines()
+            positions = []
+            normals = []
+            indices = []
+            tempNormals = [0] * sum(1 for line in lines if line.startswith("v ")) # create temp list with length of normals to sort in
+            for line in lines:
+                if line.startswith("vn"): # add normals
+                    normal = line[2:].split()
+                    normals.append(list(map(float, normal))) # convert strings to floats and add to list
+                elif line.startswith("v"): # add vertices
+                    position = line[1:].split()
+                    positions.append(list(map(float, position))) # convert strings to floats and add to list
+                elif line.startswith("f"): # add faces
+                    if "//" in line: # if normals are given
+                        index = line[1:].replace("/", " ").split()
+                        for i in range(0, 6, 2):
+                            indices.append(int(index[i]) - 1) # add vertex indices
+                            tempNormals[int(index[i]) - 1] = normals[int(index[i+1]) - 1] # add normal to corresponding vertex index
+                    else: # if normals are not given
+                        index = line[1:].split()
+                        for i in range(3):
+                            indices.append(int(index[i]) - 1)           
 
+        return positions, tempNormals if len(normals) > 0 else self.calculate_normals(positions, indices), indices
+
+    def calculate_normals(self, positions, indices):
+        normals = [0] * len(positions)
+        for i in range(0, len(indices), 3):
+                v1 = np.array(positions[indices[i] - 1]) - np.array(positions[indices[i+1] - 1])
+                v2 = np.array(positions[indices[i] - 1]) - np.array(positions[indices[i+2] - 1])
+                normal = np.cross(v1, v2).tolist()
+                normals[indices[i] - 1] = normal
+                normals[indices[i+1] - 1] = normal
+                normals[indices[i+2] - 1] = normal
+        return normals
+    
+    def center_object(self, positions):
+        xMax = xMin = positions[0][0]
+        yMax = yMin = positions[0][1]
+        zMax = zMin = positions[0][2]
+        maxlen = 0
+        for i in range(len(positions)):
+            x, y, z = positions[i]
+            if x > xMax: xMax = x
+            elif x < xMin: xMin = x
+            if y > yMax: yMax = y
+            elif y < yMin: yMin = y
+            if z > zMax: zMax = z
+            elif z < zMin: zMin = z
+        if(xMax-xMin > maxlen): maxlen = xMax-xMin
+        if(yMax-yMin > maxlen): maxlen = yMax-yMin
+        if(zMax-zMin > maxlen): maxlen = zMax-zMin
+        return np.array([(xMax+xMin)/(xMax-xMin), (yMax+yMin)/(yMax-yMin), (zMax+zMin)/(zMax-zMin)]), maxlen
 
     def set_size(self, width, height):
         self.width = width
         self.height = height
-
 
     def draw(self):
         # TODO:
@@ -172,6 +204,16 @@ class Scene:
         if self.animate:
             # increment rotation angle in each frame
             self.angleY += self.angle_increment
+
+        # switch between wifeframe, gouraud and phong shading
+        if self.shading == 0:
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+        elif self.shading == 1:
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+            #self.gouraud_shading()
+        elif self.shading == 2:
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+            #self.phong_shading()
     
         # setup matrices
         if self.persective:
@@ -179,7 +221,10 @@ class Scene:
         else:
             projection = ortho((self.width / self.height) * -1, (self.width / self.height) * 1, -1, 1, 0, 10)
         view       = look_at(0,0,2, 0,0,0, 0,1,0)
-        model      = rotate_y(self.angleY) @ rotate_x(self.angleX) @ rotate_z(self.angleZ)
+        rotation   = rotate_y(self.angleY) @ rotate_x(self.angleX) @ rotate_z(self.angleZ)
+        translation= translate(-self.center[0], -self.center[1], -self.center[2])
+        scaling    = scale((1/self.maxlen) * self.size, (1/self.maxlen) * self.size, (1/self.maxlen) * self.size)
+        model      = rotation @ translation @ scaling
         mvp_matrix = projection @ view @ model
 
         # enable shader & set uniforms
@@ -197,8 +242,6 @@ class Scene:
         # unbind the shader and vertex array state
         glUseProgram(0)
         glBindVertexArray(0)
-        
-
 
 class RenderWindow:
     """
@@ -234,6 +277,7 @@ class RenderWindow:
         glfw.set_mouse_button_callback(self.window, self.on_mouse_button)
         glfw.set_key_callback(self.window, self.on_keyboard)
         glfw.set_window_size_callback(self.window, self.on_size)
+        glfw.set_cursor_pos_callback(self.window, self.on_mouse_move)
 
         # create scene
         self.scene = scene  
@@ -245,7 +289,6 @@ class RenderWindow:
 
         # exit flag
         self.exitNow = False
-
 
     def init_GL(self):
         # debug: print GL and GLS version
@@ -260,13 +303,39 @@ class RenderWindow:
         # Enable depthtest
         glEnable(GL_DEPTH_TEST)
 
-
     def on_mouse_button(self, win, button, action, mods):
         print("mouse button: ", win, button, action, mods)
         # TODO: realize arcball metaphor for rotations as well as
         #       scaling and translation paralell to the image plane,
         #       with the mouse.
+        if button == glfw.MOUSE_BUTTON_RIGHT:
+            if action == glfw.PRESS:
+                self.scene.move_start = np.array(glfw.get_cursor_pos(win))
+                self.scene.move = True
+            elif action == glfw.RELEASE:
+                self.scene.move = False
+        if button == glfw.MOUSE_BUTTON_MIDDLE:
+            if action == glfw.PRESS:
+                self.scene.zoom_start = glfw.get_cursor_pos(win)[1]
+                self.scene.zoom = True
+            elif action == glfw.RELEASE:
+                self.scene.zoom = False
 
+    def on_mouse_move(self, win, x, y):
+        if self.scene.move:
+            if x < self.scene.move_start[0]:
+                self.scene.center[0] += 0.001
+            elif x > self.scene.move_start[0]:
+                self.scene.center[0] -= 0.001
+            if y < self.scene.move_start[1]:
+                self.scene.center[1] -= 0.001
+            elif y > self.scene.move_start[1]:
+                self.scene.center[1] += 0.001
+        if self.scene.zoom:
+            if y < self.scene.zoom_start:
+                self.scene.size *= 0.99
+            elif y > self.scene.zoom_start:
+                self.scene.size /= 0.99
 
     def on_keyboard(self, win, key, scancode, action, mods):
         print("keyboard: ", win, key, scancode, action, mods)
@@ -282,6 +351,7 @@ class RenderWindow:
                 print("toggle projection: orthographic / perspective ")
             if key == glfw.KEY_S:
                 # TODO:
+                self.scene.shading = (self.scene.shading + 1) % 3
                 print("toggle shading: wireframe, grouraud, phong")
             if key == glfw.KEY_X:
                 # TODO:
@@ -296,10 +366,8 @@ class RenderWindow:
                 self.scene.angleZ += 18
                 print("rotate: around z-axis")
 
-
     def on_size(self, win, width, height):
         self.scene.set_size(width, height)
-
 
     def run(self):
         while not glfw.window_should_close(self.window) and not self.exitNow:
@@ -319,8 +387,6 @@ class RenderWindow:
         # end
         glfw.terminate()
 
-
-
 # main function
 if __name__ == '__main__':
 
@@ -330,6 +396,8 @@ if __name__ == '__main__':
     print("press 'x' to rotate around x-axis...")
     print("press 'y' to rotate around y-axis...")
     print("press 'z' to rotate around z-axis...")
+    print("hold 'mouse middle button' to zoom...")
+    print("press 'esc' to quit...")
 
     # set size of render viewport
     width, height = 640, 480
