@@ -42,7 +42,7 @@ class Scene:
         OpenGL scene class that renders obj files as wireframe, with goroud or phong shading.
     """
 
-    def __init__(self, width, height, scenetitle="obj-Viewer"):
+    def __init__(self, width, height, scenetitle=f"OpenGL obj-Viewer: {sys.argv[1]}"):
         self.scenetitle         = scenetitle
         self.width              = width
         self.height             = height
@@ -56,46 +56,54 @@ class Scene:
         self.persective         = True
         self.shading            = 0
         self.center             = np.array([0.0, 0.0, 0.0])
-        self.maxlen             = 0.0
+        self.max_len            = 0.0
         self.size               = 1.0
         self.zoom               = False
         self.zoom_start         = 0.0
         self.move               = False
         self.move_start         = np.array([0.0, 0.0])
+        self.light_position     = [1.0, 1.0, 2.0]
+        self.arc                = False
+        self.arc_start          = [0.0, 0.0, 0.0]
+        self.arc_angle          = 0.0
+        self.arc_axis           = [0.0, 0.0, 0.0]
 
-    def init_GL(self):
+    def init_GL(self, vert = "shader.vert", frag = "shader.frag"):
         # setup buffer (vertices, colors, normals, ...)
         self.gen_buffers()
 
         # setup shader
         glBindVertexArray(self.vertex_array)
-        vertex_shader       = open("shader.vert","r").read()
-        fragment_shader     = open("shader.frag","r").read()
+        vertex_shader       = open(vert,"r").read()
+        fragment_shader     = open(frag,"r").read()
         vertex_prog         = compileShader(vertex_shader, GL_VERTEX_SHADER)
         frag_prog           = compileShader(fragment_shader, GL_FRAGMENT_SHADER)
         self.shader_program = compileProgram(vertex_prog, frag_prog)
+
+        if glGetShaderiv(vertex_prog, GL_COMPILE_STATUS) != GL_TRUE:
+            raise RuntimeError(glGetShaderInfoLog(vertex_prog))
+        if glGetShaderiv(frag_prog, GL_COMPILE_STATUS) != GL_TRUE:
+            raise RuntimeError(glGetShaderInfoLog(frag_prog))
+
+        if glGetProgramiv(self.shader_program, GL_LINK_STATUS) != GL_TRUE:
+            raise RuntimeError(glGetProgramInfoLog(self.shader_program))
 
         # unbind vertex array to bind it again in method draw
         glBindVertexArray(0)
  
     def gen_buffers(self):
-        # TODO: 
+        # TODO:
         # 1. Load geometry from file and calc normals if not available
         # 2. Load geometry and normals in buffer objects
         
-        positions, normals, indices = self.load_geometry(sys.argv[1])  
-        self.center, self.maxlen = self.center_object(positions)         
+        positions, normals, indices = self.load_geometry(sys.argv[1])
+        self.center, self.max_len = self.center_object(positions) 
 
         # generate vertex array object
         self.vertex_array = glGenVertexArrays(1)
         glBindVertexArray(self.vertex_array)
 
         # generate and fill buffer with vertex positions (attribute 0)
-        # positions = np.array([  0.0,  0.58,  0.0, # 0. vertex
-        #                        -0.5, -0.29,  0.0, # 1. vertex
-        #                         0.5, -0.29,  0.0, # 2. vertex
-        #                         0.0,  0.00, -0.58 # 3. vertex
-        #                         ], dtype=np.float32)
         positions = np.array(positions, dtype=np.float32)
         pos_buffer = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, pos_buffer)
@@ -103,12 +111,7 @@ class Scene:
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)
         glEnableVertexAttribArray(0)
  
-        # generate and fill buffer with vertex colors (attribute 1)
-        # colors = np.array([ 1.0, 0.0, 0.0, # 0. color
-        #                     0.0, 1.0, 0.0, # 1. color
-        #                     0.0, 0.0, 1.0, # 2. color
-        #                     1.0, 1.0, 1.0  # 3. color
-        #                     ], dtype=np.float32)
+        # generate and fill buffer with vertex normals (attribute 1)
         normals = np.array(normals, dtype=np.float32)
         norm_buffer = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, norm_buffer)
@@ -116,8 +119,7 @@ class Scene:
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, None)
         glEnableVertexAttribArray(1)
 
-        # generate index buffer (for triangle strip)
-        #self.indices = np.array([0, 1, 2, 3, 0, 1], dtype=np.int32)        
+        # generate index buffer  
         self.indices = np.array(indices, dtype=np.int32)
         ind_buffer_object = glGenBuffers(1)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ind_buffer_object)
@@ -142,50 +144,59 @@ class Scene:
                     position = line[1:].split()
                     positions.append(list(map(float, position))) # convert strings to floats and add to list
                 elif line.startswith("f"): # add faces
-                    if "//" in line: # if normals are given
+                    if "//" in line: # if normals are given by faces
                         index = line[1:].replace("/", " ").split()
                         for i in range(0, 6, 2):
                             indices.append(int(index[i]) - 1) # add vertex indices
                             tempNormals[int(index[i]) - 1] = normals[int(index[i+1]) - 1] # add normal to corresponding vertex index
-                    else: # if normals are not given
+                    else: # if normals are not given by faces
                         index = line[1:].split()
                         for i in range(3):
                             indices.append(int(index[i]) - 1)           
-
         return positions, tempNormals if len(normals) > 0 else self.calculate_normals(positions, indices), indices
 
     def calculate_normals(self, positions, indices):
-        normals = [0] * len(positions)
+        normals = np.zeros_like(positions) # create list with length of positions to sort in
         for i in range(0, len(indices), 3):
-                v1 = np.array(positions[indices[i] - 1]) - np.array(positions[indices[i+1] - 1])
-                v2 = np.array(positions[indices[i] - 1]) - np.array(positions[indices[i+2] - 1])
-                normal = np.cross(v1, v2).tolist()
-                normals[indices[i] - 1] = normal
-                normals[indices[i+1] - 1] = normal
-                normals[indices[i+2] - 1] = normal
+            v1 = np.array(positions[indices[i+1]]) - np.array(positions[indices[i]]) # v1 - v0
+            v2 = np.array(positions[indices[i+2]]) - np.array(positions[indices[i]]) # v2 - v0
+            normal = np.cross(v1, v2) # cross product of v1 and v2
+            normal = normal / np.linalg.norm(normal) # normalize normal
+            normals[indices[i]] += normal # add normal to corresponding vertex index
+            normals[indices[i+1]] += normal # add normal to corresponding vertex index
+            normals[indices[i+2]] += normal # add normal to corresponding vertex index
         return normals
     
     def center_object(self, positions):
-        xMax = xMin = positions[0][0]
-        yMax = yMin = positions[0][1]
-        zMax = zMin = positions[0][2]
-        maxlen = 0
-        for i in range(len(positions)):
-            x, y, z = positions[i]
-            if x > xMax: xMax = x
-            elif x < xMin: xMin = x
-            if y > yMax: yMax = y
-            elif y < yMin: yMin = y
-            if z > zMax: zMax = z
-            elif z < zMin: zMin = z
-        if(xMax-xMin > maxlen): maxlen = xMax-xMin
-        if(yMax-yMin > maxlen): maxlen = yMax-yMin
-        if(zMax-zMin > maxlen): maxlen = zMax-zMin
-        return np.array([(xMax+xMin)/(xMax-xMin), (yMax+yMin)/(yMax-yMin), (zMax+zMin)/(zMax-zMin)]), maxlen
+        center = np.mean(positions, axis=0) # calculate center of object
+        max_len = np.max(np.linalg.norm(positions, axis=1)) # calculate max length of object
+        return center, max_len
 
     def set_size(self, width, height):
         self.width = width
         self.height = height
+
+    def set_shading(self):
+        if self.shading == 0:
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+            self.init_GL("shader.vert", "shader.frag")
+        elif self.shading == 1:
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+            self.init_GL("shader_gouraud.vert", "shader_gouraud.frag")
+        elif self.shading == 2:
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+            self.init_GL("shader_phong.vert", "shader_phong.frag")
+
+    def arcball_rotation(self):
+        rotation_matrix = np.array([
+            [np.cos(self.arc_angle) + self.arc_axis[0]**2 * (1 - np.cos(self.arc_angle)), self.arc_axis[0] * self.arc_axis[1] * (1 - np.cos(self.arc_angle)) - self.arc_axis[2] * np.sin(self.arc_angle), self.arc_axis[0] * self.arc_axis[2] * (1 - np.cos(self.arc_angle)) + self.arc_axis[1] * np.sin(self.arc_angle), 0],
+            [self.arc_axis[1] * self.arc_axis[0] * (1 - np.cos(self.arc_angle)) + self.arc_axis[2] * np.sin(self.arc_angle), np.cos(self.arc_angle) + self.arc_axis[1]**2 * (1 - np.cos(self.arc_angle)), self.arc_axis[1] * self.arc_axis[2] * (1 - np.cos(self.arc_angle)) - self.arc_axis[0] * np.sin(self.arc_angle), 0],
+            [self.arc_axis[2] * self.arc_axis[0] * (1 - np.cos(self.arc_angle)) - self.arc_axis[1] * np.sin(self.arc_angle), self.arc_axis[2] * self.arc_axis[1] * (1 - np.cos(self.arc_angle)) + self.arc_axis[0] * np.sin(self.arc_angle), np.cos(self.arc_angle) + self.arc_axis[2]**2 * (1 - np.cos(self.arc_angle)), 0],
+            [0, 0, 0, 1]
+        ])
+        rotation = np.eye(4)
+        rotation[:3, :3] = rotation_matrix[:3, :3]
+        return rotation
 
     def draw(self):
         # TODO:
@@ -199,22 +210,12 @@ class Scene:
         #    well as scaling an translation
         # 4. Realize Shadow Mapping
         # 
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT) # type: ignore
+        
         if self.animate:
             # increment rotation angle in each frame
             self.angleY += self.angle_increment
-
-        # switch between wifeframe, gouraud and phong shading
-        if self.shading == 0:
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
-        elif self.shading == 1:
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-            #self.gouraud_shading()
-        elif self.shading == 2:
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-            #self.phong_shading()
-    
+        
         # setup matrices
         if self.persective:
             projection = perspective(45.0, self.width/self.height, 1.0, 5.0)
@@ -223,9 +224,9 @@ class Scene:
         view       = look_at(0,0,2, 0,0,0, 0,1,0)
         rotation   = rotate_y(self.angleY) @ rotate_x(self.angleX) @ rotate_z(self.angleZ)
         translation= translate(-self.center[0], -self.center[1], -self.center[2])
-        scaling    = scale((1/self.maxlen) * self.size, (1/self.maxlen) * self.size, (1/self.maxlen) * self.size)
-        model      = rotation @ translation @ scaling
-        mvp_matrix = projection @ view @ model
+        scaling    = scale((1/self.max_len) * self.size, (1/self.max_len) * self.size, (1/self.max_len) * self.size)
+        model      = rotation @ scaling @ translation
+        mvp_matrix = projection @ view @ model @ self.arcball_rotation()
 
         # enable shader & set uniforms
         glUseProgram(self.shader_program)
@@ -234,6 +235,11 @@ class Scene:
         varLocation = glGetUniformLocation(self.shader_program, 'modelview_projection_matrix')
         # pass value to shader
         glUniformMatrix4fv(varLocation, 1, GL_TRUE, mvp_matrix)
+
+        # set location of light
+        light_location = glGetUniformLocation(self.shader_program, 'light_position')
+        # pass value to shader
+        glUniform3fv(light_location, GL_TRUE, self.light_position)
 
         # enable vertex array & draw triangle(s)
         glBindVertexArray(self.vertex_array)
@@ -285,6 +291,7 @@ class RenderWindow:
             glfw.terminate()
             sys.exit(EXIT_FAILURE)
 
+        self.scene.set_shading()
         self.scene.init_GL()
 
         # exit flag
@@ -308,66 +315,82 @@ class RenderWindow:
         # TODO: realize arcball metaphor for rotations as well as
         #       scaling and translation paralell to the image plane,
         #       with the mouse.
+        if button == glfw.MOUSE_BUTTON_LEFT:
+            if action == glfw.PRESS:
+                self.scene.arc_start = self.project_on_sphere(glfw.get_cursor_pos(win)[0], glfw.get_cursor_pos(win)[1], (min(width, height) / 2)) # get p1 on arcball
+                self.scene.arc = True
+            elif action == glfw.RELEASE:
+                self.scene.arc = False
         if button == glfw.MOUSE_BUTTON_RIGHT:
             if action == glfw.PRESS:
-                self.scene.move_start = np.array(glfw.get_cursor_pos(win))
+                self.scene.move_start = np.array(glfw.get_cursor_pos(win)) # get start position
                 self.scene.move = True
             elif action == glfw.RELEASE:
                 self.scene.move = False
         if button == glfw.MOUSE_BUTTON_MIDDLE:
             if action == glfw.PRESS:
-                self.scene.zoom_start = glfw.get_cursor_pos(win)[1]
+                self.scene.zoom_start = glfw.get_cursor_pos(win)[1] # get start position
                 self.scene.zoom = True
             elif action == glfw.RELEASE:
                 self.scene.zoom = False
 
     def on_mouse_move(self, win, x, y):
+        if self.scene.arc:
+            p2 = self.project_on_sphere(x, y, (min(width, height) / 2)) # get p2 on arcball
+            self.scene.arc_angle = np.arccos(np.dot(self.scene.arc_start, p2)) # get angle between p1 and p2
+            self.scene.arc_axis = np.cross(self.scene.arc_start, p2) # get axis of rotation
         if self.scene.move:
             if x < self.scene.move_start[0]:
-                self.scene.center[0] += 0.001
+                self.scene.center[0] += 0.005
             elif x > self.scene.move_start[0]:
-                self.scene.center[0] -= 0.001
+                self.scene.center[0] -= 0.005
+            self.scene.move_start[0] = x # update x-start position
             if y < self.scene.move_start[1]:
-                self.scene.center[1] -= 0.001
+                self.scene.center[1] -= 0.005
             elif y > self.scene.move_start[1]:
-                self.scene.center[1] += 0.001
+                self.scene.center[1] += 0.005
+            self.scene.move_start[1] = y # update y-start position
         if self.scene.zoom:
             if y < self.scene.zoom_start:
                 self.scene.size *= 0.99
             elif y > self.scene.zoom_start:
                 self.scene.size /= 0.99
+            self.scene.zoom_start = y # update start position
+
 
     def on_keyboard(self, win, key, scancode, action, mods):
         print("keyboard: ", win, key, scancode, action, mods)
         if action == glfw.PRESS:
-            # ESC to quit
             if key == glfw.KEY_ESCAPE:
                 self.exitNow = True
             if key == glfw.KEY_A:
                 self.scene.animate = not self.scene.animate
             if key == glfw.KEY_P:
-                # TODO:
                 self.scene.persective = not self.scene.persective
                 print("toggle projection: orthographic / perspective ")
             if key == glfw.KEY_S:
-                # TODO:
                 self.scene.shading = (self.scene.shading + 1) % 3
+                self.scene.set_shading()
                 print("toggle shading: wireframe, grouraud, phong")
             if key == glfw.KEY_X:
-                # TODO:
                 self.scene.angleX += 18
                 print("rotate: around x-axis")
             if key == glfw.KEY_Y:
-                # TODO:
                 self.scene.angleY += 18
                 print("rotate: around y-axis")
             if key == glfw.KEY_Z:
-                # TODO:
                 self.scene.angleZ += 18
                 print("rotate: around z-axis")
 
     def on_size(self, win, width, height):
         self.scene.set_size(width, height)
+
+    def project_on_sphere(self, x, y, r):
+        x, y = x - width/2.0, height/2.0 - y
+        a = min(r*r, x**2 + y**2)
+        z = np.sqrt(r*r - a)
+        l = np.sqrt(x**2 + y**2 + z**2)
+        return x/l, y/l, z/l
 
     def run(self):
         while not glfw.window_should_close(self.window) and not self.exitNow:
@@ -397,6 +420,7 @@ if __name__ == '__main__':
     print("press 'y' to rotate around y-axis...")
     print("press 'z' to rotate around z-axis...")
     print("hold 'mouse middle button' to zoom...")
+    print("hold 'mouse right button' to pan...")
     print("press 'esc' to quit...")
 
     # set size of render viewport
